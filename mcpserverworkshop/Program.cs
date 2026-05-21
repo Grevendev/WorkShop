@@ -1,154 +1,274 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-var toolName = "date-info"; // uppfyller kravet: innehåller "date"
+// -----------------------------
+//  Interna backend-endpoints
+// -----------------------------
 
-// MCP endpoint
+// Enkel datum-endpoint (visar weekday + ordinal)
+app.MapGet("/date/{isoDate}", (string isoDate) =>
+{
+    var date = DateOnly.Parse(isoDate);
+    var weekday = date.DayOfWeek.ToString();
+    int ordinal = (date.Day - 1) / 7 + 1;
+
+    string ordinalStr = ordinal switch
+    {
+        1 => "1st",
+        2 => "2nd",
+        3 => "3rd",
+        _ => $"{ordinal}th"
+    };
+
+    return Results.Json(new
+    {
+        weekday,
+        ordinal = ordinalStr
+    });
+});
+
+// Enkel väder-endpoint (mockad, bara för demo)
+app.MapGet("/weather/{city}/{date}", (string city, string date) =>
+{
+    // Här skulle du normalt kalla en riktig väder-API
+    return Results.Json(new
+    {
+        city,
+        date,
+        summary = "Sunny",
+        maxTemp = 21.5
+    });
+});
+
+// -----------------------------
+//  MCP-server: EN endpoint
+// -----------------------------
+
 app.MapPost("/mcp", async (HttpContext ctx) =>
 {
-  using var reader = new StreamReader(ctx.Request.Body);
-  var body = await reader.ReadToEndAsync();
+    using var reader = new StreamReader(ctx.Request.Body);
+    var body = await reader.ReadToEndAsync();
 
-  var json = JsonNode.Parse(body);
-  var method = json?["method"]?.ToString();
-  var id = json?["id"]?.ToString();
+    var json = JsonNode.Parse(body);
+    var method = json?["method"]?.ToString();
+    var id = json?["id"];
 
-  JsonNode result = method switch
-  {
-    "initialize" => new JsonObject
+    JsonNode result;
+
+    switch (method)
     {
-      ["protocolVersion"] = "2024-11-05",
-      ["serverInfo"] = new JsonObject
-      {
-        ["name"] = "csharp-mcp",
-        ["version"] = "1.0.0"
-      }
-    },
-
-    "tools/list" => new JsonObject
-    {
-      ["tools"] = new JsonArray
+        case "initialize":
+            result = new JsonObject
             {
-                new JsonObject
+                ["protocolVersion"] = "2024-11-05",
+                ["serverInfo"] = new JsonObject
                 {
-                    ["name"] = toolName,
-                    ["description"] = "Returns weekday and ordinal occurrence for a given date",
-                    ["inputSchema"] = new JsonObject
-                    {
-                        ["type"] = "object",
-                        ["properties"] = new JsonObject
-                        {
-                            ["date"] = new JsonObject
-                            {
-                                ["type"] = "string",
-                                ["description"] = "ISO date (YYYY-MM-DD)"
-                            }
-                        },
-                        ["required"] = new JsonArray { "date" }
-                    }
+                    ["name"] = "csharp-mcp",
+                    ["version"] = "1.0.0"
                 }
-            }
-    },
+            };
+            break;
 
-    "tools/call" => HandleToolCall(json),
+        case "tools/list":
+            result = ListTools();
+            break;
 
-    _ => new JsonObject
-    {
-      ["error"] = new JsonObject
-      {
-        ["code"] = -32601,
-        ["message"] = $"Unknown method: {method}"
-      }
+        case "tools/call":
+            result = await HandleToolCall(json);
+            break;
+
+        default:
+            result = new JsonObject
+            {
+                ["error"] = new JsonObject
+                {
+                    ["code"] = -32601,
+                    ["message"] = $"Unknown method: {method}"
+                }
+            };
+            break;
     }
-  };
 
-  var response = new JsonObject
-  {
-    ["jsonrpc"] = "2.0",
-    ["id"] = id,
-    ["result"] = result
-  };
+    var response = new JsonObject
+    {
+        ["jsonrpc"] = "2.0",
+        ["id"] = id,
+        ["result"] = result
+    };
 
-  ctx.Response.ContentType = "application/json";
-  await ctx.Response.WriteAsync(response.ToJsonString());
+    ctx.Response.ContentType = "application/json";
+    await ctx.Response.WriteAsync(response.ToJsonString());
 });
 
 app.Run();
 
-// ----------------------
-// Tool handler
-// ----------------------
-JsonNode HandleToolCall(JsonNode? request)
+// -----------------------------
+//  Tools: definitioner
+// -----------------------------
+
+JsonNode ListTools()
 {
-  var tool = request?["params"]?["name"]?.ToString();
-  var args = request?["params"]?["arguments"] as JsonObject;
-
-  if (tool != "date-info")
     return new JsonObject
     {
-      ["error"] = new JsonObject
-      {
-        ["code"] = -32601,
-        ["message"] = $"Unknown tool: {tool}"
-      }
-    };
-
-  var dateString = args?["date"]?.ToString();
-
-  if (!DateTime.TryParse(dateString, out var date))
-  {
-    return new JsonObject
-    {
-      ["content"] = new JsonArray
+        ["tools"] = new JsonArray
+        {
+            // Tool 1: weekday-date
+            new JsonObject
             {
-                new JsonObject
+                ["name"] = "weekday-date",
+                ["description"] = "Returns weekday name and ordinal occurrence for a given ISO date",
+                ["inputSchema"] = new JsonObject
                 {
-                    ["type"] = "text",
-                    ["text"] = $"Invalid date: {dateString}"
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["date"] = new JsonObject
+                        {
+                            ["type"] = "string",
+                            ["description"] = "ISO date (YYYY-MM-DD)"
+                        }
+                    },
+                    ["required"] = new JsonArray { "date" }
+                }
+            },
+
+            // Tool 2: weather-forecast
+            new JsonObject
+            {
+                ["name"] = "weather-forecast",
+                ["description"] = "Fetches simple weather info for a given city and date",
+                ["inputSchema"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["city"] = new JsonObject
+                        {
+                            ["type"] = "string",
+                            ["description"] = "City name"
+                        },
+                        ["date"] = new JsonObject
+                        {
+                            ["type"] = "string",
+                            ["description"] = "ISO date (YYYY-MM-DD)"
+                        }
+                    },
+                    ["required"] = new JsonArray { "city", "date" }
                 }
             }
+        }
     };
-  }
+}
 
-  var weekday = date.ToString("dddd", CultureInfo.InvariantCulture);
-  var ordinal = GetOrdinalOccurrence(date);
+// -----------------------------
+//  Tools: anrop
+// -----------------------------
 
-  return new JsonObject
-  {
-    ["content"] = new JsonArray
+async Task<JsonNode> HandleToolCall(JsonNode? request)
+{
+    var tool = request?["params"]?["name"]?.ToString();
+    var args = request?["params"]?["arguments"] as JsonObject ?? new JsonObject();
+
+    return tool switch
+    {
+        "weekday-date" => HandleWeekdayDate(args),
+        "weather-forecast" => await HandleWeatherForecast(args),
+        _ => new JsonObject
+        {
+            ["error"] = new JsonObject
+            {
+                ["code"] = -32601,
+                ["message"] = $"Unknown tool: {tool}"
+            }
+        }
+    };
+}
+
+// -----------------------------
+//  Tool 1: weekday-date
+// -----------------------------
+
+JsonNode HandleWeekdayDate(JsonObject args)
+{
+    var iso = args?["date"]?.ToString();
+    if (iso is null)
+    {
+        return new JsonObject
+        {
+            ["error"] = new JsonObject
+            {
+                ["code"] = -32602,
+                ["message"] = "Missing required parameter: date"
+            }
+        };
+    }
+
+    var date = DateOnly.Parse(iso);
+    var weekday = date.DayOfWeek.ToString();
+    int ordinal = (date.Day - 1) / 7 + 1;
+
+    string ordinalStr = ordinal switch
+    {
+        1 => "1st",
+        2 => "2nd",
+        3 => "3rd",
+        _ => $"{ordinal}th"
+    };
+
+    return new JsonObject
+    {
+        ["content"] = new JsonArray
         {
             new JsonObject
             {
                 ["type"] = "text",
-                ["text"] = $"{weekday}, {ordinal} {weekday}"
+                ["text"] = $"{weekday}, {ordinalStr}"
             }
         }
-  };
+    };
 }
 
-// ----------------------
-// Ordinal logic
-// ----------------------
-string GetOrdinalOccurrence(DateTime date)
+// -----------------------------
+//  Tool 2: weather-forecast
+// -----------------------------
+
+async Task<JsonNode> HandleWeatherForecast(JsonObject args)
 {
-  int count = 0;
+    var city = args?["city"]?.ToString();
+    var date = args?["date"]?.ToString();
 
-  for (int day = 1; day <= date.Day; day++)
-  {
-    var d = new DateTime(date.Year, date.Month, day);
-    if (d.DayOfWeek == date.DayOfWeek)
-      count++;
-  }
+    if (city is null || date is null)
+    {
+        return new JsonObject
+        {
+            ["error"] = new JsonObject
+            {
+                ["code"] = -32602,
+                ["message"] = "Missing required parameters: city and date"
+            }
+        };
+    }
 
-  return count switch
-  {
-    1 => "1st",
-    2 => "2nd",
-    3 => "3rd",
-    _ => $"{count}th"
-  };
+    // Här använder vi vår interna endpoint istället för extern API, för enkelhet
+    var http = new HttpClient();
+    var url = $"http://localhost:5000/weather/{Uri.EscapeDataString(city)}/{date}";
+    var json = JsonNode.Parse(await http.GetStringAsync(url));
+
+    var summary = json?["summary"]?.ToString() ?? "unknown";
+    var maxTemp = json?["maxTemp"]?.ToString() ?? "?";
+
+    return new JsonObject
+    {
+        ["content"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "text",
+                ["text"] = $"Weather in {city} on {date}: {summary}, max {maxTemp}°C"
+            }
+        }
+    };
 }
