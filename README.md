@@ -27,17 +27,17 @@ It handles:
 Returns weekday name and ordinal occurrence for a given ISO date.
 
 Example output:
-
+```
 Monday, 2nd
-
+```
 
 ### ✔ Tool 2: weather-forecast  
 Mocked weather response for verification purposes.
 
 Example output:
-
+```
 Weather in Paris on 2025-07-12: Sunny, max 21°C
-
+```
 
 ### ✔ Tool 3: search_documents (RAG)  
 A Retrieval-Augmented Generation tool that:
