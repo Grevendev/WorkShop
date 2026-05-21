@@ -1,32 +1,101 @@
-# C# MCP Server: **date-info** Tool
+# C# MCP Server - Date, Weather & RAG Document Search
 
-## Overview
-This project implements a fully compliant Model Context Protocol (MCP)
-server in C#
-The server exposes a single tool, 'date-info', which accepts an ISO-formatted date (YYYY-MM-DD) and returns:
-- The wwekday name (e.g., Monday, Saturday)
-- The ordinal occurrence of that weekday within the month (e.g., 1st Monday, 3rd Saturday)
-This tool is designed to pass the official MCP Challange #1 verification.
+This project implements a fully functional **MCP (Model Context Protocol) server** in C#, exposing three tools:
+
+1. **weekday-date** — returns weekday + ordinal occurrence  
+2. **weather-forecast** — mock weather lookup for a given city and date  
+3. **search_documents** — a RAG-style free‑text search tool over a remote knowledge base  
+
+The server is compatible with any MCP‑enabled AI client such as Claude Code, Cursor, or GitHub Copilot in VS Code.
 
 ---
 
-## Features
-- Full MCP protocol support:
-- - initialize
-- - tool/list
-- - tools/Call
+## 🚀 Features
 
-- Implements the required date arithmetic without external dependencies
-- Clean JSON-RPC-style request/response handling
-- Fully compatible with:
-- - Claude Desktop
-- - Cursor
-- Copilor
-- - Any MCP-enabled client
+### ✔ MCP-compliant JSON-RPC server  
+The server exposes a single endpoint:
 
---- 
+#### POST /mcp
 
-## Tool: **'date-info'**
+It handles:
 
-## Description
-Returns the weekday and ordinal occurrence for a given ISO date.
+- `initialize`
+- `tools/list`
+- `tools/call`
+
+### ✔ Tool 1: weekday-date  
+Returns weekday name and ordinal occurrence for a given ISO date.
+
+Example output:
+
+Monday, 2nd
+
+
+### ✔ Tool 2: weather-forecast  
+Mocked weather response for verification purposes.
+
+Example output:
+
+Weather in Paris on 2025-07-12: Sunny, max 21°C
+
+
+### ✔ Tool 3: search_documents (RAG)  
+A Retrieval-Augmented Generation tool that:
+
+- Fetches a knowledge base from  
+  `https://tribetrot.ngrok.app/api/knowledge-base`
+- Caches documents in memory
+- Performs keyword scoring
+- Returns a JSON array (as text) with:
+  - `id`
+  - `title`
+  - `content`
+  - `score` (relevance)
+
+Example output:
+
+```json
+[
+  {
+    "id": "sev-001",
+    "title": "Severity Levels & Response SLAs",
+    "content": "...",
+    "score": 2
+  }
+]
+```
+## 📦 Project Structure
+Program.cs        # MCP server with all tools
+skills.md         # (optional) CAIN rule engine instructions
+README.md         # Project documentation
+
+
+## 🧠 How RAG Works in This Server
+The search_documents tool implements a minimal RAG pipeline:
+1. Retrieve  
+Free‑text query → keyword match against all documents.
+2. Augment  
+The AI assistant receives the returned JSON array as context.
+3. Generate  
+The assistant uses the retrieved content as the source of truth.
+
+This allows the AI to answer questions about the knowledge base without embedding the entire dataset into the prompt.
+
+## 📘 Skills File (Optional)
+If your AI assistant supports Skills files, you can add a skills.md to define:
+
+- How to parse complaint logs
+- When to call weekday-date
+- When to call weather-forecast
+- When to SKIP or HANDLE entries
+- Saturn bonus rule
+- Deterministic logic for CAIN
+
+## ▶ Running the Server
+dotnet run
+
+
+
+
+
+
