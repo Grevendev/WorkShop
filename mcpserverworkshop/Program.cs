@@ -1,14 +1,11 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-// MCP-tool definition
-var toolName = "greet-day"; // uppfyller regeln
-
-if (!toolName.Contains("day") && !toolName.Contains("week") && !toolName.Contains("date"))
-  throw new Exception("Tool name must contain 'day', 'week', or 'date'");
+var toolName = "date-info"; // uppfyller kravet: innehåller "date"
 
 // MCP endpoint
 app.MapPost("/mcp", async (HttpContext ctx) =>
@@ -39,19 +36,19 @@ app.MapPost("/mcp", async (HttpContext ctx) =>
                 new JsonObject
                 {
                     ["name"] = toolName,
-                    ["description"] = "Returns a greeting for the given name",
+                    ["description"] = "Returns weekday and ordinal occurrence for a given date",
                     ["inputSchema"] = new JsonObject
                     {
                         ["type"] = "object",
                         ["properties"] = new JsonObject
                         {
-                            ["name"] = new JsonObject
+                            ["date"] = new JsonObject
                             {
                                 ["type"] = "string",
-                                ["description"] = "The name to greet"
+                                ["description"] = "ISO date (YYYY-MM-DD)"
                             }
                         },
-                        ["required"] = new JsonArray { "name" }
+                        ["required"] = new JsonArray { "date" }
                     }
                 }
             }
@@ -90,7 +87,7 @@ JsonNode HandleToolCall(JsonNode? request)
   var tool = request?["params"]?["name"]?.ToString();
   var args = request?["params"]?["arguments"] as JsonObject;
 
-  if (tool != "greet-day")
+  if (tool != "date-info")
     return new JsonObject
     {
       ["error"] = new JsonObject
@@ -100,7 +97,25 @@ JsonNode HandleToolCall(JsonNode? request)
       }
     };
 
-  var name = args?["name"]?.ToString() ?? "unknown";
+  var dateString = args?["date"]?.ToString();
+
+  if (!DateTime.TryParse(dateString, out var date))
+  {
+    return new JsonObject
+    {
+      ["content"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["type"] = "text",
+                    ["text"] = $"Invalid date: {dateString}"
+                }
+            }
+    };
+  }
+
+  var weekday = date.ToString("dddd", CultureInfo.InvariantCulture);
+  var ordinal = GetOrdinalOccurrence(date);
 
   return new JsonObject
   {
@@ -109,8 +124,31 @@ JsonNode HandleToolCall(JsonNode? request)
             new JsonObject
             {
                 ["type"] = "text",
-                ["text"] = $"Hello {name}"
+                ["text"] = $"{weekday}, {ordinal} {weekday}"
             }
         }
+  };
+}
+
+// ----------------------
+// Ordinal logic
+// ----------------------
+string GetOrdinalOccurrence(DateTime date)
+{
+  int count = 0;
+
+  for (int day = 1; day <= date.Day; day++)
+  {
+    var d = new DateTime(date.Year, date.Month, day);
+    if (d.DayOfWeek == date.DayOfWeek)
+      count++;
+  }
+
+  return count switch
+  {
+    1 => "1st",
+    2 => "2nd",
+    3 => "3rd",
+    _ => $"{count}th"
   };
 }
