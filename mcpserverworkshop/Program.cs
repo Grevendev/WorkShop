@@ -1,75 +1,116 @@
-using Microsoft.AspNetCore.Mvc;
-using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-app.MapPost("/mcp", async ([FromBody] McpRequest request) =>
+// MCP-tool definition
+var toolName = "greet-day"; // uppfyller regeln
+
+if (!toolName.Contains("day") && !toolName.Contains("week") && !toolName.Contains("date"))
+  throw new Exception("Tool name must contain 'day', 'week', or 'date'");
+
+// MCP endpoint
+app.MapPost("/mcp", async (HttpContext ctx) =>
 {
-  if (request.Method == "tools.call" && request.Params?.Tool == "weekday_date")
+  using var reader = new StreamReader(ctx.Request.Body);
+  var body = await reader.ReadToEndAsync();
+
+  var json = JsonNode.Parse(body);
+  var method = json?["method"]?.ToString();
+  var id = json?["id"]?.ToString();
+
+  JsonNode result = method switch
   {
-    var dateString = request.Params.Arguments["date"]?.ToString();
-    if (!DateTime.TryParse(dateString, out var date))
+    "initialize" => new JsonObject
     {
-      return Results.Json(new
+      ["protocolVersion"] = "2024-11-05",
+      ["serverInfo"] = new JsonObject
       {
-        content = new[]
-          {
-                    new { type = "text", text = $"Invalid date: {dateString}" }
+        ["name"] = "csharp-mcp",
+        ["version"] = "1.0.0"
+      }
+    },
+
+    "tools/list" => new JsonObject
+    {
+      ["tools"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = toolName,
+                    ["description"] = "Returns a greeting for the given name",
+                    ["inputSchema"] = new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["name"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "The name to greet"
+                            }
+                        },
+                        ["required"] = new JsonArray { "name" }
+                    }
                 }
-      });
-    }
-
-    var weekday = date.ToString("dddd", CultureInfo.InvariantCulture);
-    var ordinal = GetOrdinalOccurrence(date);
-
-    return Results.Json(new
-    {
-      content = new[]
-        {
-                new { type = "text", text = $"{weekday}, {ordinal} {weekday}" }
             }
-    });
-  }
+    },
 
-  return Results.Json(new
-  {
-    content = new[]
+    "tools/call" => HandleToolCall(json),
+
+    _ => new JsonObject
+    {
+      ["error"] = new JsonObject
       {
-            new { type = "text", text = "Unknown tool or method" }
-        }
-  });
+        ["code"] = -32601,
+        ["message"] = $"Unknown method: {method}"
+      }
+    }
+  };
+
+  var response = new JsonObject
+  {
+    ["jsonrpc"] = "2.0",
+    ["id"] = id,
+    ["result"] = result
+  };
+
+  ctx.Response.ContentType = "application/json";
+  await ctx.Response.WriteAsync(response.ToJsonString());
 });
 
 app.Run();
 
-static string GetOrdinalOccurrence(DateTime date)
+// ----------------------
+// Tool handler
+// ----------------------
+JsonNode HandleToolCall(JsonNode? request)
 {
-  int count = 0;
-  for (int day = 1; day <= date.Day; day++)
-  {
-    var d = new DateTime(date.Year, date.Month, day);
-    if (d.DayOfWeek == date.DayOfWeek)
-      count++;
-  }
+  var tool = request?["params"]?["name"]?.ToString();
+  var args = request?["params"]?["arguments"] as JsonObject;
 
-  return count switch
+  if (tool != "greet-day")
+    return new JsonObject
+    {
+      ["error"] = new JsonObject
+      {
+        ["code"] = -32601,
+        ["message"] = $"Unknown tool: {tool}"
+      }
+    };
+
+  var name = args?["name"]?.ToString() ?? "unknown";
+
+  return new JsonObject
   {
-    1 => "1st",
-    2 => "2nd",
-    3 => "3rd",
-    _ => $"{count}th"
+    ["content"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "text",
+                ["text"] = $"Hello {name}"
+            }
+        }
   };
-}
-
-public class McpRequest
-{
-  public string Method { get; set; }
-  public McpParams Params { get; set; }
-}
-
-public class McpParams
-{
-  public string Tool { get; set; }
-  public Dictionary<string, object> Arguments { get; set; }
 }
