@@ -4,64 +4,23 @@ using System.Text.Json.Nodes;
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-// -----------------------------
-//  Interna backend-endpoints
-// -----------------------------
-
-// Enkel datum-endpoint (visar weekday + ordinal)
-app.MapGet("/date/{isoDate}", (string isoDate) =>
-{
-    var date = DateOnly.Parse(isoDate);
-    var weekday = date.DayOfWeek.ToString();
-    int ordinal = (date.Day - 1) / 7 + 1;
-
-    string ordinalStr = ordinal switch
-    {
-        1 => "1st",
-        2 => "2nd",
-        3 => "3rd",
-        _ => $"{ordinal}th"
-    };
-
-    return Results.Json(new
-    {
-        weekday,
-        ordinal = ordinalStr
-    });
-});
-
-// Enkel väder-endpoint (mockad, bara för demo)
-app.MapGet("/weather/{city}/{date}", (string city, string date) =>
-{
-    // Här skulle du normalt kalla en riktig väder-API
-    return Results.Json(new
-    {
-        city,
-        date,
-        summary = "Sunny",
-        maxTemp = 21.5
-    });
-});
-
-// -----------------------------
-//  MCP-server: EN endpoint
-// -----------------------------
-
+// ---------------------------------------------------------
+// MCP ENDPOINT (ENDA ENDPOINTEN SOM MCP-KLIENTER ANVÄNDER)
+// ---------------------------------------------------------
 app.MapPost("/mcp", async (HttpContext ctx) =>
 {
-    using var reader = new StreamReader(ctx.Request.Body);
-    var body = await reader.ReadToEndAsync();
-
-    var json = JsonNode.Parse(body);
-    var method = json?["method"]?.ToString();
-    var id = json?["id"];
-
-    JsonNode result;
-
-    switch (method)
+    try
     {
-        case "initialize":
-            result = new JsonObject
+        using var reader = new StreamReader(ctx.Request.Body);
+        var body = await reader.ReadToEndAsync();
+
+        var json = JsonNode.Parse(body);
+        var method = json?["method"]?.ToString();
+        var id = json?["id"];
+
+        JsonNode result = method switch
+        {
+            "initialize" => new JsonObject
             {
                 ["protocolVersion"] = "2024-11-05",
                 ["serverInfo"] = new JsonObject
@@ -69,46 +28,56 @@ app.MapPost("/mcp", async (HttpContext ctx) =>
                     ["name"] = "csharp-mcp",
                     ["version"] = "1.0.0"
                 }
-            };
-            break;
+            },
 
-        case "tools/list":
-            result = ListTools();
-            break;
+            "tools/list" => ListTools(),
 
-        case "tools/call":
-            result = await HandleToolCall(json);
-            break;
+            "tools/call" => await HandleToolCall(json),
 
-        default:
-            result = new JsonObject
+            _ => new JsonObject
             {
                 ["error"] = new JsonObject
                 {
                     ["code"] = -32601,
                     ["message"] = $"Unknown method: {method}"
                 }
-            };
-            break;
+            }
+        };
+
+        // IMPORTANT: DeepClone() fixes "node already has a parent"
+        var response = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = id?.DeepClone(),
+            ["result"] = result.DeepClone()
+        };
+
+        ctx.Response.ContentType = "application/json";
+        await ctx.Response.WriteAsync(response.ToJsonString());
     }
-
-    var response = new JsonObject
+    catch (Exception ex)
     {
-        ["jsonrpc"] = "2.0",
-        ["id"] = id,
-        ["result"] = result
-    };
+        Console.WriteLine("MCP ERROR: " + ex);
 
-    ctx.Response.ContentType = "application/json";
-    await ctx.Response.WriteAsync(response.ToJsonString());
+        var errorResponse = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = null,
+            ["error"] = new JsonObject
+            {
+                ["code"] = -32000,
+                ["message"] = ex.Message
+            }
+        };
+
+        ctx.Response.ContentType = "application/json";
+        await ctx.Response.WriteAsync(errorResponse.ToJsonString());
+    }
 });
 
-app.Run();
-
-// -----------------------------
-//  Tools: definitioner
-// -----------------------------
-
+// ---------------------------------------------------------
+// TOOLS/LIST
+// ---------------------------------------------------------
 JsonNode ListTools()
 {
     return new JsonObject
@@ -163,10 +132,9 @@ JsonNode ListTools()
     };
 }
 
-// -----------------------------
-//  Tools: anrop
-// -----------------------------
-
+// ---------------------------------------------------------
+// TOOLS/CALL
+// ---------------------------------------------------------
 async Task<JsonNode> HandleToolCall(JsonNode? request)
 {
     var tool = request?["params"]?["name"]?.ToString();
@@ -176,6 +144,7 @@ async Task<JsonNode> HandleToolCall(JsonNode? request)
     {
         "weekday-date" => HandleWeekdayDate(args),
         "weather-forecast" => await HandleWeatherForecast(args),
+
         _ => new JsonObject
         {
             ["error"] = new JsonObject
@@ -187,10 +156,9 @@ async Task<JsonNode> HandleToolCall(JsonNode? request)
     };
 }
 
-// -----------------------------
-//  Tool 1: weekday-date
-// -----------------------------
-
+// ---------------------------------------------------------
+// TOOL 1: weekday-date
+// ---------------------------------------------------------
 JsonNode HandleWeekdayDate(JsonObject args)
 {
     var iso = args?["date"]?.ToString();
@@ -231,10 +199,9 @@ JsonNode HandleWeekdayDate(JsonObject args)
     };
 }
 
-// -----------------------------
-//  Tool 2: weather-forecast
-// -----------------------------
-
+// ---------------------------------------------------------
+// TOOL 2: weather-forecast (mockad version)
+// ---------------------------------------------------------
 async Task<JsonNode> HandleWeatherForecast(JsonObject args)
 {
     var city = args?["city"]?.ToString();
@@ -252,14 +219,7 @@ async Task<JsonNode> HandleWeatherForecast(JsonObject args)
         };
     }
 
-    // Här använder vi vår interna endpoint istället för extern API, för enkelhet
-    var http = new HttpClient();
-    var url = $"http://localhost:5000/weather/{Uri.EscapeDataString(city)}/{date}";
-    var json = JsonNode.Parse(await http.GetStringAsync(url));
-
-    var summary = json?["summary"]?.ToString() ?? "unknown";
-    var maxTemp = json?["maxTemp"]?.ToString() ?? "?";
-
+    // Mockat svar – funkar för verifiering
     return new JsonObject
     {
         ["content"] = new JsonArray
@@ -267,8 +227,11 @@ async Task<JsonNode> HandleWeatherForecast(JsonObject args)
             new JsonObject
             {
                 ["type"] = "text",
-                ["text"] = $"Weather in {city} on {date}: {summary}, max {maxTemp}°C"
+                ["text"] = $"Weather in {city} on {date}: Sunny, max 21°C"
             }
         }
     };
 }
+
+// ---------------------------------------------------------
+app.Run();
