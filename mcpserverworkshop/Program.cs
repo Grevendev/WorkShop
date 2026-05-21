@@ -11,7 +11,7 @@ List<(string Id, string Title, string Content)> KnowledgeBase = new();
 HttpClient http = new HttpClient();
 
 // ---------------------------------------------------------
-// MCP ENDPOINT
+// MCP ENDPOINT (ENDA ENDPOINTEN SOM MCP-KLIENTER ANVÄNDER)
 // ---------------------------------------------------------
 app.MapPost("/mcp", async (HttpContext ctx) =>
 {
@@ -50,6 +50,7 @@ app.MapPost("/mcp", async (HttpContext ctx) =>
       }
     };
 
+    // IMPORTANT: DeepClone() fixes "node already has a parent"
     var response = new JsonObject
     {
       ["jsonrpc"] = "2.0",
@@ -231,7 +232,7 @@ JsonNode HandleWeekdayDate(JsonObject args)
 }
 
 // ---------------------------------------------------------
-// TOOL 2: weather-forecast (mockad)
+// TOOL 2: weather-forecast (mockad version)
 // ---------------------------------------------------------
 async Task<JsonNode> HandleWeatherForecast(JsonObject args)
 {
@@ -250,6 +251,7 @@ async Task<JsonNode> HandleWeatherForecast(JsonObject args)
     };
   }
 
+  // Mockat svar – funkar för verifiering
   return new JsonObject
   {
     ["content"] = new JsonArray
